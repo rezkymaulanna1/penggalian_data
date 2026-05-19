@@ -65,16 +65,15 @@ def train_models(df):
             'actual': y_test,
             'preds': preds,
         }
-    return results, numeric_features, categorical_features
+    return results
 
-# UI
-st.title('🌱 Smart Farming Crop Yield Dashboard')
-st.caption('Data Mining Project — Prediksi hasil panen (yield per hectare) berbasis data pertanian dan sensor')
+st.title('🌱 Smart Farming Data Mining Dashboard')
+st.caption('Prediksi hasil panen (yield_kg_per_hectare) berbasis fitur pertanian dan sensor')
 
 df = load_data()
-results, numeric_features, categorical_features = train_models(df)
+results = train_models(df)
 
-page = st.sidebar.radio('Navigasi', ['Overview', 'Eksplorasi Data', 'Modeling', 'Prediksi'])
+page = st.sidebar.radio('Navigasi', ['Overview', 'Eksplorasi Data', 'Modeling', 'Prediksi', 'Batch Prediksi'])
 
 if page == 'Overview':
     c1, c2, c3, c4 = st.columns(4)
@@ -84,7 +83,7 @@ if page == 'Overview':
     c4.metric('Region', df['region'].nunique())
 
     st.subheader('Ringkasan Dataset')
-    st.write('Dataset memuat variabel lingkungan, irigasi, pupuk, NDVI, dan status penyakit tanaman untuk memprediksi **yield_kg_per_hectare**.')
+    st.write('Dataset memuat variabel lingkungan, irigasi, pupuk, NDVI, dan status penyakit tanaman untuk memprediksi yield_kg_per_hectare.')
     st.dataframe(df.head(10), use_container_width=True)
 
 elif page == 'Eksplorasi Data':
@@ -138,22 +137,22 @@ elif page == 'Prediksi':
     model_name = st.selectbox('Model', list(results.keys()))
 
     with st.form('pred_form'):
-        region = st.selectbox('Region', sorted(df['region'].unique()))
-        crop_type = st.selectbox('Crop Type', sorted(df['crop_type'].unique()))
+        region = st.selectbox('Region', sorted(df['region'].dropna().astype(str).unique()))
+        crop_type = st.selectbox('Crop Type', sorted(df['crop_type'].dropna().astype(str).unique()))
         soil_moisture = st.number_input('Soil Moisture %', 0.0, 100.0, 30.0)
         soil_ph = st.number_input('Soil pH', 0.0, 14.0, 6.5)
         temperature = st.number_input('Temperature C', -10.0, 60.0, 25.0)
         rainfall = st.number_input('Rainfall mm', 0.0, 500.0, 150.0)
         humidity = st.number_input('Humidity %', 0.0, 100.0, 70.0)
         sunlight = st.number_input('Sunlight Hours', 0.0, 24.0, 6.0)
-        irrigation_type = st.selectbox('Irrigation Type', sorted(df['irrigation_type'].unique()))
-        fertilizer_type = st.selectbox('Fertilizer Type', sorted(df['fertilizer_type'].unique()))
+        irrigation_type = st.selectbox('Irrigation Type', sorted(df['irrigation_type'].dropna().astype(str).unique()))
+        fertilizer_type = st.selectbox('Fertilizer Type', sorted(df['fertilizer_type'].dropna().astype(str).unique()))
         pesticide = st.number_input('Pesticide Usage ml', 0.0, 100.0, 20.0)
         total_days = st.number_input('Total Days', 1, 365, 120)
         latitude = st.number_input('Latitude', -90.0, 90.0, 20.0)
         longitude = st.number_input('Longitude', -180.0, 180.0, 80.0)
         ndvi = st.number_input('NDVI Index', 0.0, 1.0, 0.6)
-        disease = st.selectbox('Crop Disease Status', sorted(df['crop_disease_status'].unique()))
+        disease = st.selectbox('Crop Disease Status', sorted(df['crop_disease_status'].dropna().astype(str).unique()))
         submitted = st.form_submit_button('Prediksi')
 
     if submitted:
@@ -177,3 +176,21 @@ elif page == 'Prediksi':
         }])
         pred = results[model_name]['pipeline'].predict(input_df)[0]
         st.success(f'Prediksi yield: {pred:,.2f} kg/hectare')
+
+elif page == 'Batch Prediksi':
+    st.subheader('Batch Prediksi via CSV')
+    st.caption('Upload CSV dengan kolom fitur yang sama seperti dataset, minimal kolom input utama yang digunakan model.')
+    model_name = st.selectbox('Model batch', list(results.keys()), key='batch_model')
+    upload = st.file_uploader('Upload CSV batch', type=['csv'], key='batch_upload')
+
+    if upload is not None:
+        batch_df = pd.read_csv(upload)
+        needed = ['region','crop_type','soil_moisture_%','soil_pH','temperature_C','rainfall_mm','humidity_%','sunlight_hours','irrigation_type','fertilizer_type','pesticide_usage_ml','total_days','latitude','longitude','NDVI_index','crop_disease_status']
+        missing = [c for c in needed if c not in batch_df.columns]
+        if missing:
+            st.error('Kolom yang kurang: ' + ', '.join(missing))
+        else:
+            preds = results[model_name]['pipeline'].predict(batch_df[needed])
+            batch_df['predicted_yield_kg_per_hectare'] = preds
+            st.dataframe(batch_df.head(50), use_container_width=True)
+            st.download_button('Download hasil prediksi', batch_df.to_csv(index=False).encode('utf-8'), 'prediksi_batch.csv', 'text/csv')
