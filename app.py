@@ -179,7 +179,7 @@ elif page == 'Prediksi':
 
 elif page == 'Batch Prediksi':
     st.subheader('Batch Prediksi via CSV')
-    st.caption('Upload CSV dengan kolom fitur yang sama seperti dataset, minimal kolom input utama yang digunakan model.')
+    st.caption('Upload CSV dengan kolom fitur yang sama seperti dataset. Jika kolom yield_kg_per_hectare tersedia, sistem akan menampilkan evaluasi metrik dan visualisasi perbandingan aktual vs prediksi.')
     model_name = st.selectbox('Model batch', list(results.keys()), key='batch_model')
     upload = st.file_uploader('Upload CSV batch', type=['csv'], key='batch_upload')
 
@@ -192,5 +192,95 @@ elif page == 'Batch Prediksi':
         else:
             preds = results[model_name]['pipeline'].predict(batch_df[needed])
             batch_df['predicted_yield_kg_per_hectare'] = preds
+
+            # --- Metrics Dashboard ---
+            has_actual = 'yield_kg_per_hectare' in batch_df.columns
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric('Jumlah Data', f"{len(batch_df):,}")
+            col2.metric('Rata-rata Prediksi', f"{preds.mean():,.2f}")
+            col3.metric('Min Prediksi', f"{preds.min():,.2f}")
+            col4.metric('Max Prediksi', f"{preds.max():,.2f}")
+
+            if has_actual:
+                mae = mean_absolute_error(batch_df['yield_kg_per_hectare'], preds)
+                rmse = np.sqrt(mean_squared_error(batch_df['yield_kg_per_hectare'], preds))
+                r2 = r2_score(batch_df['yield_kg_per_hectare'], preds)
+                st.markdown('#### Evaluasi Model pada Batch Data')
+                c1, c2, c3 = st.columns(3)
+                c1.metric('MAE', f"{mae:,.2f}")
+                c2.metric('RMSE', f"{rmse:,.2f}")
+                c3.metric('R²', f"{r2:.4f}")
+
+            # --- Visualization 1: Distribusi Prediksi ---
+            st.markdown('#### Distribusi Hasil Prediksi Yield')
+            fig1, ax1 = plt.subplots(figsize=(10, 5))
+            sns.histplot(batch_df['predicted_yield_kg_per_hectare'], bins=30, kde=True, color='#2e8b57', ax=ax1, label='Prediksi')
+            if has_actual:
+                sns.histplot(batch_df['yield_kg_per_hectare'], bins=30, kde=True, color='#cd5c5c', ax=ax1, alpha=0.6, label='Aktual')
+                ax1.legend()
+            ax1.set_xlabel('Yield (kg/hectare)')
+            ax1.set_ylabel('Frekuensi')
+            ax1.set_title('Distribusi Yield: Prediksi vs Aktual' if has_actual else 'Distribusi Yield Prediksi')
+            st.pyplot(fig1)
+
+            # --- Visualization 2: Scatter Plot (Aktual vs Prediksi) ---
+            if has_actual:
+                st.markdown('#### Scatter Plot: Aktual vs Prediksi')
+                fig2, ax2 = plt.subplots(figsize=(8, 6))
+                ax2.scatter(batch_df['yield_kg_per_hectare'], batch_df['predicted_yield_kg_per_hectare'], alpha=0.6, color='#4682b4', edgecolors='k', linewidth=0.5)
+                mn = min(batch_df['yield_kg_per_hectare'].min(), batch_df['predicted_yield_kg_per_hectare'].min())
+                mx = max(batch_df['yield_kg_per_hectare'].max(), batch_df['predicted_yield_kg_per_hectare'].max())
+                ax2.plot([mn, mx], [mn, mx], 'r--', lw=2, label='Perfect Prediction')
+                ax2.set_xlabel('Aktual Yield (kg/hectare)')
+                ax2.set_ylabel('Prediksi Yield (kg/hectare)')
+                ax2.set_title('Actual vs Predicted Yield')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+                st.pyplot(fig2)
+
+            # --- Visualization 3: Box Plot per Crop Type ---
+            st.markdown('#### Distribusi Prediksi Yield per Crop Type')
+            fig3, ax3 = plt.subplots(figsize=(10, 6))
+            sns.boxplot(x='crop_type', y='predicted_yield_kg_per_hectare', data=batch_df, palette='Set2', ax=ax3)
+            ax3.set_xlabel('Crop Type')
+            ax3.set_ylabel('Prediksi Yield (kg/hectare)')
+            ax3.set_title('Box Plot Prediksi Yield berdasarkan Jenis Tanaman')
+            plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45)
+            st.pyplot(fig3)
+
+            # --- Visualization 4: Bar Plot per Region ---
+            st.markdown('#### Rata-rata Prediksi Yield per Region')
+            fig4, ax4 = plt.subplots(figsize=(10, 5))
+            region_avg = batch_df.groupby('region')['predicted_yield_kg_per_hectare'].mean().sort_values()
+            colors = sns.color_palette('YlGn', len(region_avg))
+            ax4.barh(region_avg.index, region_avg.values, color=colors)
+            ax4.set_xlabel('Rata-rata Prediksi Yield (kg/hectare)')
+            ax4.set_title('Rata-rata Prediksi Yield per Region')
+            st.pyplot(fig4)
+
+            # --- Visualization 5: Feature Importance (if tree-based) ---
+            if model_name in ['Decision Tree', 'Random Forest'] and hasattr(results[model_name]['pipeline'].named_steps['model'], 'feature_importances_'):
+                st.markdown('#### Feature Importance')
+                model = results[model_name]['pipeline'].named_steps['model']
+                preprocessor = results[model_name]['pipeline'].named_steps['preprocessor']
+
+                # Get feature names
+                num_features = preprocessor.transformers_[0][2]
+                cat_features = preprocessor.transformers_[1][2]
+                cat_onehot = preprocessor.named_transformers_['cat']['onehot']
+                cat_feature_names = cat_onehot.get_feature_names_out(cat_features)
+                all_features = list(num_features) + list(cat_feature_names)
+
+                importances = pd.Series(model.feature_importances_, index=all_features).sort_values(ascending=True).tail(15)
+                fig5, ax5 = plt.subplots(figsize=(8, 6))
+                importances.plot(kind='barh', color='#2e8b57', ax=ax5)
+                ax5.set_title('Top 15 Feature Importances')
+                ax5.set_xlabel('Importance Score')
+                st.pyplot(fig5)
+
+            # --- Data Table ---
+            st.markdown('#### Preview Hasil Prediksi')
             st.dataframe(batch_df.head(50), use_container_width=True)
+
+            # --- Download ---
             st.download_button('Download hasil prediksi', batch_df.to_csv(index=False).encode('utf-8'), 'prediksi_batch.csv', 'text/csv')
